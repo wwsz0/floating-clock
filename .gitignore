@@ -1,0 +1,11 @@
+.DS_Store
+*.app/
+compiler-overlay.json
+*.log
+*.zip
+.build/
+.env
+.env.*
+*.pem
+*.key
+quota-response*.json
