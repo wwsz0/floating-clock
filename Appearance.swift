@@ -93,11 +93,11 @@ final class AppearanceSettings: NSObject {
     @objc func changeTransparency() {
         controller?.appearance.setTransparency(slider.doubleValue)
         updateLabel()
-        controller?.clockView.needsDisplay = true
+        controller?.refreshAppearance()
     }
 
     @objc func changeColor() {
         controller?.appearance.setColor(colorWell.color)
-        controller?.clockView.needsDisplay = true
+        controller?.refreshAppearance()
     }
 }
