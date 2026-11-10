@@ -18,6 +18,17 @@ struct ClockAppearance {
 
     var fill: NSColor { color.withAlphaComponent(1 - transparency / 100) }
 
+    /// 背景色偏深时用浅色文字；与气泡使用同一亮度规则。
+    var usesLightText: Bool {
+        guard let rgb = color.usingColorSpace(.sRGB) else { return true }
+        return rgb.redComponent * 0.2126 + rgb.greenComponent * 0.7152 + rgb.blueComponent * 0.0722 < 0.5
+    }
+
+    /// 额度卡片与按钮下的同色底板：保证高透明度时小字可读；透明度 90%→100% 时逐渐消失。
+    var legibilityPlate: CGFloat { CGFloat(0.4 * min(1, max(0, (100 - transparency) / 10))) }
+
+    var palette: ClockPalette { ClockPalette(light: usesLightText, base: color, plateAlpha: legibilityPlate) }
+
     func setTransparency(_ value: Double) {
         guard value.isFinite else { return }
         defaults.set(min(100, max(0, value)), forKey: "backgroundTransparency")
@@ -26,6 +37,45 @@ struct ClockAppearance {
     func setColor(_ value: NSColor) {
         guard let rgb = value.usingColorSpace(.sRGB) else { return }
         defaults.set([Double(rgb.redComponent), Double(rgb.greenComponent), Double(rgb.blueComponent)], forKey: "backgroundRGB")
+    }
+}
+
+/// 时钟、额度面板与按钮共用的配色：文字颜色随背景深浅切换，并带反色光晕以适应任意桌面。
+struct ClockPalette {
+    let light: Bool
+    let base: NSColor
+    let plateAlpha: CGFloat
+
+    var ink: NSColor { light ? .white : NSColor(srgbRed: 0.08, green: 0.09, blue: 0.11, alpha: 1) }
+    var primary: NSColor { ink.withAlphaComponent(0.96) }
+    var secondary: NSColor { ink.withAlphaComponent(0.74) }
+    var tertiary: NSColor { ink.withAlphaComponent(0.54) }
+    func tint(_ alpha: CGFloat) -> NSColor { ink.withAlphaComponent(alpha) }
+    var plate: NSColor { base.withAlphaComponent(plateAlpha) }
+    var good: NSColor { light ? NSColor(srgbRed: 0.36, green: 0.80, blue: 0.88, alpha: 1) : NSColor(srgbRed: 0.0, green: 0.50, blue: 0.60, alpha: 1) }
+    var warn: NSColor { light ? NSColor(srgbRed: 1.0, green: 0.66, blue: 0.30, alpha: 1) : NSColor(srgbRed: 0.80, green: 0.40, blue: 0.0, alpha: 1) }
+    var critical: NSColor { light ? NSColor(srgbRed: 1.0, green: 0.42, blue: 0.40, alpha: 1) : NSColor(srgbRed: 0.78, green: 0.16, blue: 0.14, alpha: 1) }
+
+    func level(_ remaining: Double) -> NSColor { remaining <= 10 ? critical : remaining <= 25 ? warn : good }
+
+    func halo(blur: CGFloat, alpha: CGFloat) -> NSShadow {
+        let shadow = NSShadow()
+        shadow.shadowColor = (light ? NSColor.black : NSColor.white).withAlphaComponent(light ? alpha : alpha * 1.2)
+        shadow.shadowBlurRadius = blur
+        shadow.shadowOffset = NSSize(width: 0, height: light ? -0.5 : 0)
+        return shadow
+    }
+
+    func text(_ size: CGFloat, _ weight: NSFont.Weight = .regular, color: NSColor, align: NSTextAlignment = .natural, digits: Bool = false, truncate: NSLineBreakMode = .byTruncatingTail) -> [NSAttributedString.Key: Any] {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = align
+        paragraph.lineBreakMode = truncate
+        return [
+            .font: digits ? NSFont.monospacedDigitSystemFont(ofSize: size, weight: weight) : NSFont.systemFont(ofSize: size, weight: weight),
+            .foregroundColor: color,
+            .paragraphStyle: paragraph,
+            .shadow: halo(blur: 2, alpha: 0.6)
+        ]
     }
 }
 
@@ -67,7 +117,7 @@ final class AppearanceSettings: NSObject {
         colorWell.action = #selector(changeColor)
         colorWell.setAccessibilityLabel("背景颜色")
         content.addSubview(colorWell)
-        let hint = NSTextField(labelWithString: "即时生效并自动保存；文字和进度条不变。")
+        let hint = NSTextField(labelWithString: "即时生效并自动保存；文字颜色随背景深浅切换。")
         hint.font = NSFont.systemFont(ofSize: 11)
         hint.textColor = .secondaryLabelColor
         hint.frame = NSRect(x: 20, y: 20, width: 275, height: 18)

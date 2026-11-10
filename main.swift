@@ -19,40 +19,134 @@ final class ClockView: NSView {
         guard let controller = controller else { return }
         NSColor.clear.setFill()
         bounds.fill(using: .copy)
-        let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 16, yRadius: 16)
-        controller.appearance.fill.setFill()
+        let appearance = controller.appearance
+        let palette = appearance.palette
+        let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 16, yRadius: 16)
+        appearance.fill.setFill()
         shape.fill()
-        NSColor(white: 1, alpha: 0.15).setStroke()
+        // 双层描边：外侧暗线在浅色桌面上勾出边缘，内侧亮线在深色桌面上提亮边缘。
+        NSColor(white: 0, alpha: 0.16).setStroke()
         shape.lineWidth = 1
         shape.stroke()
+        let rim = NSBezierPath(roundedRect: bounds.insetBy(dx: 1.5, dy: 1.5), xRadius: 15, yRadius: 15)
+        NSColor(white: 1, alpha: palette.light ? 0.12 : 0.5).setStroke()
+        rim.lineWidth = 1
+        rim.stroke()
+
+        let area = NSRect(x: 0, y: bounds.height - controller.clockHeight, width: bounds.width, height: controller.clockHeight)
+        if controller.showQuota {
+            palette.tint(0.12).setFill()
+            NSRect(x: 14, y: area.minY, width: bounds.width - 28, height: 1).fill()
+        }
         let now = displayedDate(Date())
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.alignment = .center
-        let timeAttributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: controller.fontSize, weight: .medium),
-            .foregroundColor: NSColor.white,
-            .paragraphStyle: paragraph
-        ]
         let text = clockText(now, seconds: controller.showSeconds)
-        let textHeight = (text as NSString).size(withAttributes: timeAttributes).height
-        let clockBottom = bounds.height - controller.clockHeight
-        let baseline = clockBottom + (controller.clockHeight - textHeight) / 2 + (controller.showDate ? 10 : 0)
-        (text as NSString).draw(in: NSRect(x: 8, y: baseline, width: bounds.width - 16, height: textHeight), withAttributes: timeAttributes)
+        let digits = NSFont.monospacedDigitSystemFont(ofSize: controller.fontSize, weight: .medium)
+        let time = NSMutableAttributedString(string: String(text.prefix(5)), attributes: [.font: digits, .foregroundColor: palette.primary])
+        if controller.showSeconds {
+            // 秒缩小、降低对比度并与时分共用基线：主次分明，宽度也更紧凑。
+            time.addAttribute(.kern, value: controller.fontSize * 0.06, range: NSRange(location: 4, length: 1))
+            time.append(NSAttributedString(string: String(text.dropFirst(5)), attributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: controller.secondsFontSize, weight: .medium),
+                .foregroundColor: palette.secondary
+            ]))
+        }
+        // 以数字的大写高度（而非行高）定位，各字号下的视觉留白一致。
+        let dateBlock = controller.showDate ? controller.dateGap + controller.dateFontSize * 0.86 : 0
+        let timeBaseline = round(area.maxY - controller.clockTopPadding - digits.capHeight)
+        drawCentered(time, baseline: timeBaseline, palette: palette, softHalo: controller.fontSize * 0.2)
         if controller.showDate {
             let formatter = DateFormatter()
             formatter.locale = Locale(identifier: "zh_CN")
-            formatter.dateFormat = "M月d日  EEEE"
-            (formatter.string(from: now) as NSString).draw(in: NSRect(x: 8, y: baseline - 22, width: bounds.width - 16, height: 19), withAttributes: [
-                .font: NSFont.systemFont(ofSize: 12, weight: .medium),
-                .foregroundColor: NSColor(white: 1, alpha: 0.65),
-                .paragraphStyle: paragraph
+            formatter.dateFormat = "M月d日 EEEE"
+            let date = NSAttributedString(string: formatter.string(from: now), attributes: [
+                .font: NSFont.systemFont(ofSize: controller.dateFontSize, weight: .medium),
+                .foregroundColor: palette.tint(0.8),
+                .kern: 0.3
             ])
+            drawCentered(date, baseline: round(timeBaseline - dateBlock), palette: palette, softHalo: 5)
         }
+    }
+
+    /// 按基线居中绘制，并叠加“紧贴光晕 + 柔和外晕”，在浅色窗口或复杂壁纸上依然清晰。
+    private func drawCentered(_ string: NSAttributedString, baseline: CGFloat, palette: ClockPalette, softHalo: CGFloat) {
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        let width = ceil(string.size().width)
+        let origin = NSPoint(x: round(bounds.midX - width / 2), y: baseline)
+        context.saveGState()
+        palette.halo(blur: softHalo, alpha: 0.28).set()
+        context.beginTransparencyLayer(auxiliaryInfo: nil)
+        palette.halo(blur: 1.5, alpha: 0.5).set()
+        string.draw(with: NSRect(x: origin.x, y: origin.y, width: width + 2, height: 0), options: [], context: nil)
+        context.endTransparencyLayer()
+        context.restoreGState()
     }
 
     override func rightMouseDown(with event: NSEvent) {
         guard let menu = controller?.makeMenu() else { return }
         NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+}
+
+/// 与时钟融为一体的胶囊按钮：同色底板 + 半透明着色，悬停与按下有层次反馈。
+final class HUDButton: NSButton {
+    var palette = ClockPalette(light: true, base: .black, plateAlpha: 0.4) { didSet { needsDisplay = true } }
+    var symbol: String? { didSet { needsDisplay = true } }
+    private var hovering = false { didSet { needsDisplay = true } }
+
+    convenience init(symbol: String?, title: String) {
+        self.init(frame: .zero)
+        self.symbol = symbol
+        self.title = title
+        isBordered = false
+        focusRingType = .none
+        setButtonType(.momentaryPushIn)
+    }
+
+    override var isEnabled: Bool { didSet { needsDisplay = true } }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovering = true }
+    override func mouseExited(with event: NSEvent) { hovering = false }
+
+    private var contentColor: NSColor { !isEnabled ? palette.tertiary : hovering ? palette.primary : palette.secondary }
+    private var titleAttributes: [NSAttributedString.Key: Any] { palette.text(11.5, .medium, color: contentColor) }
+
+    private var symbolImage: NSImage? {
+        guard let symbol = symbol, let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) else { return nil }
+        let configuration = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold).applying(NSImage.SymbolConfiguration(paletteColors: [contentColor]))
+        return image.withSymbolConfiguration(configuration)
+    }
+
+    var fittingWidth: CGFloat {
+        let textWidth = title.isEmpty ? 0 : ceil((title as NSString).size(withAttributes: titleAttributes).width)
+        let iconWidth = symbolImage.map { ceil($0.size.width) } ?? 0
+        guard textWidth > 0 else { return 26 }
+        return 20 + iconWidth + (iconWidth > 0 ? 5 : 0) + textWidth
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let shape = NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8)
+        palette.plate.setFill()
+        shape.fill()
+        palette.tint(!isEnabled ? 0.04 : isHighlighted ? 0.24 : hovering ? 0.16 : 0.09).setFill()
+        shape.fill()
+        let image = symbolImage
+        let titleSize = title.isEmpty ? .zero : (title as NSString).size(withAttributes: titleAttributes)
+        let iconWidth = image?.size.width ?? 0
+        let total = iconWidth + (iconWidth > 0 && titleSize.width > 0 ? 5 : 0) + titleSize.width
+        var x = round(bounds.midX - total / 2)
+        if let image = image {
+            image.draw(in: NSRect(x: x, y: round(bounds.midY - image.size.height / 2), width: image.size.width, height: image.size.height), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+            x += iconWidth + 5
+        }
+        if titleSize.width > 0 {
+            (title as NSString).draw(at: NSPoint(x: x, y: round(bounds.midY - titleSize.height / 2)), withAttributes: titleAttributes)
+        }
     }
 }
 
@@ -66,9 +160,10 @@ final class ClockController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let quota = QuotaLoader()
     let quotaScroll = NSScrollView()
     let quotaContent = QuotaContentView()
-    let disclosureButton = NSButton(title: "", target: nil, action: nil)
-    let queryButton = NSButton(title: "查询额度", target: nil, action: nil)
-    let settingsButton = NSButton(title: "", target: nil, action: nil)
+    let disclosureButton = HUDButton(symbol: "chevron.right", title: "展开额度")
+    let queryButton = HUDButton(symbol: "arrow.clockwise", title: "查询")
+    let settingsButton = HUDButton(symbol: "gearshape", title: "")
+    static let footerHeight: CGFloat = 44
     var appearance: ClockAppearance { ClockAppearance(defaults: defaults) }
     lazy var appearanceSettings = AppearanceSettings(controller: self)
     lazy var alertTracker = QuotaAlertTracker(defaults: defaults)
@@ -76,7 +171,16 @@ final class ClockController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var alertsEnabled: Bool { !defaults.bool(forKey: "quotaAlertsDisabled") }
     var alertsOnLeft: Bool { defaults.bool(forKey: "quotaAlertsOnLeft") }
     var showQuota: Bool { !defaults.bool(forKey: "hideQuota") }
-    var clockHeight: CGFloat { ceil(fontSize * 1.35 + (showDate ? 44 : 22)) }
+    var secondsFontSize: CGFloat { round(fontSize * 0.5) }
+    var dateFontSize: CGFloat { max(11, round(fontSize * 0.33)) }
+    var dateGap: CGFloat { round(fontSize * 0.3) }
+    /// 数字顶端到窗口上沿的留白；下方留白较小，与工具条间距合起来与上方视觉相等。
+    var clockTopPadding: CGFloat { round(max(18, fontSize * 0.46)) }
+    var clockHeight: CGFloat {
+        let capHeight = NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .medium).capHeight
+        let block = capHeight + (showDate ? dateGap + dateFontSize * 0.86 : 0)
+        return ceil(block + clockTopPadding * 1.6)
+    }
     var showSeconds: Bool { !defaults.bool(forKey: "hideSeconds") }
     var showDate: Bool { !defaults.bool(forKey: "hideDate") }
     var locked: Bool { defaults.bool(forKey: "locked") }
@@ -108,23 +212,17 @@ final class ClockController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         quotaScroll.autohidesScrollers = true
         quotaScroll.documentView = quotaContent
         clockView.addSubview(quotaScroll)
-        for button in [disclosureButton, queryButton] {
+        for button in [disclosureButton, queryButton, settingsButton] {
             button.target = self
-            button.bezelStyle = .rounded
-            button.font = NSFont.systemFont(ofSize: 12, weight: .medium)
-            button.appearance = NSAppearance(named: .darkAqua)
             clockView.addSubview(button)
         }
         disclosureButton.action = #selector(toggleQuota)
         queryButton.action = #selector(refreshQuota)
-        settingsButton.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: "外观设置")
-        settingsButton.isBordered = false
-        settingsButton.contentTintColor = .white
+        queryButton.toolTip = "立即查询额度"
+        queryButton.setAccessibilityLabel("查询额度")
         settingsButton.toolTip = "设置背景透明度和颜色"
         settingsButton.setAccessibilityLabel("外观设置")
-        settingsButton.target = self
         settingsButton.action = #selector(showAppearanceSettings)
-        clockView.addSubview(settingsButton)
         applySettings()
         if defaults.object(forKey: "originX") != nil {
             let saved = NSPoint(x: defaults.double(forKey: "originX"), y: defaults.double(forKey: "originY"))
@@ -214,20 +312,27 @@ final class ClockController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applySettings() {
         if showQuota || !alertsEnabled { alertPresenter.dismiss() }
         let width = max(320, ceil(fontSize * (showSeconds ? 5.25 : 3.5) + 36))
-        let quotaHeight = showQuota ? quota.lines.reduce(CGFloat(24)) { $0 + $1.height } : 0
+        let footer = Self.footerHeight
+        let quotaHeight = showQuota ? quota.lines.reduce(CGFloat(8)) { $0 + $1.height } : 0
         let availableHeight = max(200, (panel.screen ?? NSScreen.main)?.visibleFrame.height ?? 800) - 48
-        let size = NSSize(width: width, height: min(clockHeight + 76 + quotaHeight, availableHeight))
+        let size = NSSize(width: width, height: min(clockHeight + footer + quotaHeight, availableHeight))
         let top = panel.frame.maxY
         panel.setFrame(NSRect(x: panel.frame.minX, y: top - size.height, width: size.width, height: size.height), display: true)
         quotaScroll.isHidden = !showQuota
-        disclosureButton.title = showQuota ? "▾ 收起全部额度" : "▸ 展开全部额度"
-        disclosureButton.frame = NSRect(x: 14, y: size.height - clockHeight - 29, width: width - 28, height: 26)
-        queryButton.frame = NSRect(x: 14, y: 12, width: width - 66, height: 28)
-        settingsButton.frame = NSRect(x: width - 44, y: 12, width: 30, height: 28)
+        // 底部工具条：左侧展开／收起，右侧查询与外观设置；两种状态下位置不变。
+        disclosureButton.symbol = showQuota ? "chevron.down" : "chevron.right"
+        disclosureButton.title = showQuota ? "收起额度" : "展开额度"
+        disclosureButton.setAccessibilityLabel(showQuota ? "收起全部额度" : "展开全部额度")
         let loading = quota.sources.contains { $0.loading }
         queryButton.isEnabled = !loading
-        queryButton.title = loading ? "正在查询…" : "查询额度"
-        quotaScroll.frame = NSRect(x: 0, y: 48, width: width, height: max(0, size.height - clockHeight - 82))
+        queryButton.title = loading ? "查询中…" : "查询"
+        let row: CGFloat = 26
+        settingsButton.frame = NSRect(x: width - 10 - row, y: 10, width: row, height: row)
+        let queryWidth = queryButton.fittingWidth
+        queryButton.frame = NSRect(x: settingsButton.frame.minX - 6 - queryWidth, y: 10, width: queryWidth, height: row)
+        disclosureButton.frame = NSRect(x: 10, y: 10, width: disclosureButton.fittingWidth, height: row)
+        // 滚动区与内容等高，不再因 6pt 差值常驻滚动条；仅在超出屏幕时滚动。
+        quotaScroll.frame = NSRect(x: 0, y: footer, width: width, height: max(0, size.height - clockHeight - footer))
         let previousHeight = quotaContent.frame.height
         quotaContent.setFrameSize(NSSize(width: quotaScroll.contentSize.width, height: quotaHeight))
         if previousHeight != quotaHeight {
@@ -246,7 +351,10 @@ final class ClockController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func refreshAppearance() {
+        let palette = appearance.palette
+        for button in [disclosureButton, queryButton, settingsButton] { button.palette = palette }
         clockView.needsDisplay = true
+        quotaContent.needsDisplay = true
         alertPresenter.updateAppearance(appearance)
     }
 

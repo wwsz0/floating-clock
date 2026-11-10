@@ -66,8 +66,11 @@ final class QuotaSpeechBubbleView: NSView {
     private let deltaField = NSTextField(labelWithString: "")
     private let resetField = NSTextField(labelWithString: "")
     private var fillColor = NSColor(calibratedWhite: 0.09, alpha: 0.15)
+    private var plateColor = NSColor(calibratedWhite: 0.09, alpha: 0.4)
     private var lightText = true
+    private var palette: ClockPalette { ClockPalette(light: lightText, base: plateColor.withAlphaComponent(1), plateAlpha: plateColor.alphaComponent) }
     var backgroundOpacity: CGFloat { fillColor.alphaComponent }
+    private var effectiveOpacity: CGFloat { 1 - (1 - fillColor.alphaComponent) * (1 - plateColor.alphaComponent) }
     private var accent: NSColor {
         if alert.recovered {
             return lightText ? NSColor(srgbRed: 0.55, green: 0.91, blue: 0.72, alpha: 1) : NSColor(srgbRed: 0.1, green: 0.48, blue: 0.3, alpha: 1)
@@ -128,23 +131,29 @@ final class QuotaSpeechBubbleView: NSView {
 
     func updateAppearance(_ style: ClockAppearance) {
         fillColor = style.fill
-        if let rgb = style.color.usingColorSpace(.sRGB) {
-            lightText = rgb.redComponent * 0.2126 + rgb.greenComponent * 0.7152 + rgb.blueComponent * 0.0722 < 0.5
-        }
+        plateColor = style.color.withAlphaComponent(style.legibilityPlate)
+        lightText = style.usesLightText
         refreshTextColors()
         needsDisplay = true
     }
 
     private func refreshTextColors() {
         appearance = NSAppearance(named: lightText ? .darkAqua : .aqua)
-        nameField.textColor = lightText ? NSColor.white.withAlphaComponent(0.9) : NSColor(calibratedWhite: 0.19, alpha: 1)
-        deltaField.textColor = accent
-        resetField.textColor = lightText ? NSColor.white.withAlphaComponent(0.65) : NSColor(calibratedWhite: 0.38, alpha: 1)
-        closeButton.contentTintColor = lightText ? NSColor.white.withAlphaComponent(0.65) : NSColor(calibratedWhite: 0.48, alpha: 0.8)
-        let amountText = NSMutableAttributedString(string: alert.exhausted ? "已用完" : "剩余 ", attributes: [.font: NSFont.systemFont(ofSize: alert.exhausted ? 16 : 10, weight: .medium), .foregroundColor: accent])
+        // 文字统一带反色光晕，浅色窗口上依然可读；字体与原版一致，自检中的宽度测量不变。
+        func styled(_ field: NSTextField, _ text: String, _ font: NSFont, _ color: NSColor, _ truncate: NSLineBreakMode) {
+            var attributes = palette.text(font.pointSize, color: color, truncate: truncate)
+            attributes[.font] = font
+            field.attributedStringValue = NSAttributedString(string: text, attributes: attributes)
+        }
+        styled(nameField, alert.title, nameField.font!, palette.tint(0.92), .byTruncatingMiddle)
+        styled(deltaField, deltaField.stringValue, deltaField.font!, accent, .byTruncatingTail)
+        styled(resetField, alert.resetText, resetField.font!, palette.tint(0.68), .byTruncatingTail)
+        closeButton.contentTintColor = palette.tint(lightText ? 0.6 : 0.5)
+        // 修正：属性字符串会覆盖 alignment，需在段落样式中声明右对齐，百分比才会贴右侧。
+        let amountText = NSMutableAttributedString(string: alert.exhausted ? "已用完" : "剩余 ", attributes: palette.text(alert.exhausted ? 16 : 10, .medium, color: accent, align: .right))
         if !alert.exhausted {
             let current = alert.remainingPercent ?? 80
-            amountText.append(NSAttributedString(string: String(format: "%.0f%%", current), attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 19, weight: .semibold), .foregroundColor: accent]))
+            amountText.append(NSAttributedString(string: String(format: "%.0f%%", current), attributes: palette.text(19, .semibold, color: accent, align: .right, digits: true)))
         }
         amountField.attributedStringValue = amountText
     }
@@ -200,13 +209,15 @@ final class QuotaSpeechBubbleView: NSView {
         path.close()
         NSGraphicsContext.saveGraphicsState()
         let shadow = NSShadow()
-        shadow.shadowColor = NSColor.black.withAlphaComponent(0.14 * backgroundOpacity)
-        shadow.shadowBlurRadius = 3
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.22 * effectiveOpacity)
+        shadow.shadowBlurRadius = 4
         shadow.shadowOffset = NSSize(width: 0, height: -1)
         shadow.set()
         fillColor.setFill()
         path.fill()
         NSGraphicsContext.restoreGraphicsState()
+        plateColor.setFill()
+        path.fill()
         (lightText ? NSColor.white.withAlphaComponent(0.15) : NSColor.black.withAlphaComponent(0.18)).setStroke()
         path.lineWidth = 0.8
         path.stroke()
