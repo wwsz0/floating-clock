@@ -22,6 +22,18 @@
 - 气泡背景颜色、透明度随时钟变化；短弧线尾巴根据可用屏幕空间自动调整方向。
 - 气泡内显示账户、累计下降、当前剩余及 **重置日期和时间**；无有效时间时显示“重置时间未知”。
 
+## 下载安装
+
+无需编译，可从 [GitHub Releases](https://github.com/wwsz0/floating-clock/releases/latest) 下载 DMG 安装包和同名 `.sha256` 校验文件。通用版同时支持 Apple Silicon 与 Intel，要求 macOS 12.0 或更新版本。
+
+将两个文件保存在同一目录，在该目录运行以下命令核对完整性：
+
+```sh
+shasum -a 256 -c FloatingClock-1.0-build3-universal.dmg.sha256
+```
+
+显示 `OK` 后打开 DMG，将“悬浮时钟.app”拖到“应用程序”。替换旧版前先退出旧版。当前安装包使用本机临时签名，未经过 Apple 公证；首次打开的安全提示及处理方式见下方“制作 DMG 安装包”。
+
 ## 编译与运行
 
 需要 macOS 和 Apple Command Line Tools 提供的 `swiftc`。如果尚未安装 Command Line Tools，先运行：
@@ -40,6 +52,18 @@ open '悬浮时钟.app'
 ```
 
 编译脚本会生成并在本机签名 `悬浮时钟.app`。仓库不包含编译产物；脚本中的 SwiftBridging 兼容处理用于部分 Command Line Tools 环境。
+
+### 制作 DMG 安装包
+
+```sh
+./package-dmg.command
+```
+
+打包脚本生成同时包含 Apple Silicon 和 Intel 架构的通用版，最低系统版本与 `Info.plist` 中的 macOS 12.0 声明一致。默认的 `./build.command` 仅编译当前机器架构。
+
+安装包和 SHA-256 校验文件保存在 `dist/`。打开 DMG 后，将“悬浮时钟.app”拖到“应用程序”即可安装；替换旧版前先退出旧版。安装包仅含客户端和安装说明，不包含开发归档、真实账号数据或额度后端。
+
+当前版本采用本机临时签名，未进行 Developer ID 签名或 Apple 公证。从互联网下载后，macOS 可能提示无法验证开发者；只有在确认来源和文件校验值可信时，才应通过“系统设置 → 隐私与安全性 → 仍要打开”允许此应用，不应关闭系统安全保护。
 
 ## 常用操作
 

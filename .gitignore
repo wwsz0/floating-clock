@@ -9,3 +9,6 @@ compiler-overlay.json
 *.pem
 *.key
 quota-response*.json
+archive/
+verification/
+dist/
