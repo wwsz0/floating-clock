@@ -11,12 +11,13 @@ printf '{"version":0,"roots":[{"type":"file","name":"/Library/Developer/CommandL
 BINARIES=()
 for ARCH in ${=ARCHITECTURES}; do
     BINARY="$BUILD/FloatingClock-$ARCH"
-    swiftc main.swift Quota.swift Appearance.swift QuotaAlerts.swift QuotaSpeechBubble.swift QuotaAlertTests.swift -O -target "$ARCH-apple-macosx$MIN_OS" -vfsoverlay "$PWD/compiler-overlay.json" -module-cache-path "$BUILD/module-cache" -framework AppKit -o "$BINARY"
+    swiftc main.swift Quota.swift Appearance.swift QuotaAlerts.swift QuotaSpeechBubble.swift QuotaAlertTests.swift SystemMonitor.swift SystemMonitorView.swift MonitorSettings.swift SystemMonitorTests.swift -O -target "$ARCH-apple-macosx$MIN_OS" -vfsoverlay "$PWD/compiler-overlay.json" -module-cache-path "$BUILD/module-cache" -framework AppKit -framework IOKit -framework DiskArbitration -framework SystemConfiguration -o "$BINARY"
     BINARIES+=("$BINARY")
 done
 lipo -create "${BINARIES[@]}" -output "$APP/Contents/MacOS/FloatingClock"
 cp Info.plist "$APP/Contents/Info.plist"
 cp Assets/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+cp PrivacyInfo.xcprivacy "$APP/Contents/Resources/PrivacyInfo.xcprivacy"
 if xattr -p com.apple.FinderInfo "$APP" >/dev/null 2>&1; then
     xattr -d com.apple.FinderInfo "$APP"
 fi

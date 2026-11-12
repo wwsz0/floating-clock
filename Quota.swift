@@ -178,7 +178,9 @@ final class QuotaContentView: NSView {
     override var mouseDownCanMoveWindow: Bool { true }
     override func draw(_ dirtyRect: NSRect) {
         guard let controller = controller else { return }
-        drawQuota(controller.quota.lines, in: bounds, top: bounds.height - 6, palette: controller.appearance.palette)
+        if controller.showQuota {
+            drawQuota(controller.quota.lines, in: bounds, top: bounds.height - controller.monitorHeight - 6, palette: controller.appearance.palette)
+        }
     }
     override func rightMouseDown(with event: NSEvent) {
         guard let menu = controller?.makeMenu() else { return }

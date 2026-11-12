@@ -34,7 +34,7 @@ final class ClockView: NSView {
         rim.stroke()
 
         let area = NSRect(x: 0, y: bounds.height - controller.clockHeight, width: bounds.width, height: controller.clockHeight)
-        if controller.showQuota {
+        if controller.dashboardHeight > 0 {
             palette.tint(0.12).setFill()
             NSRect(x: 14, y: area.minY, width: bounds.width - 28, height: 1).fill()
         }
@@ -151,7 +151,7 @@ final class HUDButton: NSButton {
 }
 
 final class ClockController: NSObject, NSApplicationDelegate, NSWindowDelegate {
-    let defaults = CommandLine.arguments.contains("--alert-ui-self-test") ? UserDefaults(suiteName: "local.floatingclock.alert-ui-test")! : UserDefaults.standard
+    let defaults = CommandLine.arguments.contains("--alert-ui-self-test") ? UserDefaults(suiteName: "local.floatingclock.alert-ui-test")! : CommandLine.arguments.contains("--monitor-ui-self-test") ? UserDefaults(suiteName: "local.floatingclock.monitor-ui-test")! : UserDefaults.standard
     var panel: NSPanel!
     var clockView: ClockView!
     var statusItem: NSStatusItem!
@@ -160,6 +160,9 @@ final class ClockController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let quota = QuotaLoader()
     let quotaScroll = NSScrollView()
     let quotaContent = QuotaContentView()
+    let systemMonitor = SystemMonitor()
+    let systemView = SystemMonitorView(frame: .zero)
+    let systemButton = HUDButton(symbol: "waveform.path.ecg", title: "系统")
     let disclosureButton = HUDButton(symbol: "chevron.right", title: "展开额度")
     let queryButton = HUDButton(symbol: "arrow.clockwise", title: "查询")
     let settingsButton = HUDButton(symbol: "gearshape", title: "")
@@ -171,6 +174,11 @@ final class ClockController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var alertsEnabled: Bool { !defaults.bool(forKey: "quotaAlertsDisabled") }
     var alertsOnLeft: Bool { defaults.bool(forKey: "quotaAlertsOnLeft") }
     var showQuota: Bool { !defaults.bool(forKey: "hideQuota") }
+    var monitorConfiguration: MonitorConfiguration { MonitorConfiguration(defaults: defaults) }
+    var showSystemDetails: Bool { !defaults.bool(forKey: "monitorCollapsed") }
+    var monitorHeight: CGFloat { systemView.contentHeight }
+    var dashboardHeight: CGFloat { monitorHeight + (showQuota ? quota.lines.reduce(CGFloat(8)) { $0 + $1.height } : 0) }
+    var isUITest: Bool { CommandLine.arguments.contains("--alert-ui-self-test") || CommandLine.arguments.contains("--monitor-ui-self-test") }
     var secondsFontSize: CGFloat { round(fontSize * 0.5) }
     var dateFontSize: CGFloat { max(11, round(fontSize * 0.33)) }
     var dateGap: CGFloat { round(fontSize * 0.3) }
@@ -192,6 +200,11 @@ final class ClockController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         if CommandLine.arguments.contains("--alert-ui-self-test") {
             defaults.removePersistentDomain(forName: "local.floatingclock.alert-ui-test")
+            for metric in MonitorMetric.allCases { defaults.set(true, forKey: "monitorDisabled_" + metric.rawValue) }
+        }
+        if CommandLine.arguments.contains("--monitor-ui-self-test") {
+            defaults.removePersistentDomain(forName: "local.floatingclock.monitor-ui-test")
+            defaults.set(true, forKey: "hideQuota")
         }
         panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 240, height: 100), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.title = "悬浮时钟"
@@ -207,21 +220,25 @@ final class ClockController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         clockView.controller = self
         panel.contentView = clockView
         quotaContent.controller = self
+        systemView.controller = self
+        quotaContent.addSubview(systemView)
         quotaScroll.drawsBackground = false
         quotaScroll.hasVerticalScroller = true
         quotaScroll.autohidesScrollers = true
         quotaScroll.documentView = quotaContent
         clockView.addSubview(quotaScroll)
-        for button in [disclosureButton, queryButton, settingsButton] {
+        for button in [disclosureButton, systemButton, queryButton, settingsButton] {
             button.target = self
             clockView.addSubview(button)
         }
         disclosureButton.action = #selector(toggleQuota)
+        systemButton.action = #selector(toggleSystem)
+        systemButton.setAccessibilityLabel("展开或收起系统监控")
         queryButton.action = #selector(refreshQuota)
-        queryButton.toolTip = "立即查询额度"
-        queryButton.setAccessibilityLabel("查询额度")
-        settingsButton.toolTip = "设置背景透明度和颜色"
-        settingsButton.setAccessibilityLabel("外观设置")
+        queryButton.toolTip = "立即查询额度与系统数据"
+        queryButton.setAccessibilityLabel("查询额度与系统数据")
+        settingsButton.toolTip = "外观与系统监控设置"
+        settingsButton.setAccessibilityLabel("时钟设置")
         settingsButton.action = #selector(showAppearanceSettings)
         applySettings()
         if defaults.object(forKey: "originX") != nil {
@@ -237,12 +254,17 @@ final class ClockController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         refreshMenu()
         panel.orderFrontRegardless()
         let ticker = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
-            self?.clockView.needsDisplay = true
-            if self?.showQuota == true { self?.quotaContent.needsDisplay = true }
+            guard let self = self else { return }
+            self.clockView.setNeedsDisplay(NSRect(x: 0, y: self.clockView.bounds.height - self.clockHeight, width: self.clockView.bounds.width, height: self.clockHeight))
         }
         RunLoop.main.add(ticker, forMode: .common)
         timer = ticker
         quota.onChange = { [weak self] in self?.applySettings() }
+        systemMonitor.onChange = { [weak self] in
+            guard let self = self else { return }
+            if self.systemView.frame.height != self.monitorHeight { self.applySettings() }
+            else { self.systemView.needsDisplay = true }
+        }
         quota.onSnapshot = { [weak self] source, response in
             guard let self = self else { return }
             let alerts = self.alertTracker.consume(response, source: source.path, title: source.title, notify: self.alertsEnabled && !self.showQuota, visibleAlerts: self.alertPresenter.visibleAlerts)
@@ -256,6 +278,18 @@ final class ClockController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSApp.terminate(nil)
             return
         }
+        if CommandLine.arguments.contains("--monitor-ui-self-test") {
+            runSystemMonitorUITests(self)
+            defaults.removePersistentDomain(forName: "local.floatingclock.monitor-ui-test")
+            NSApp.terminate(nil)
+            return
+        }
+        systemMonitor.configure(monitorConfiguration)
+        let workspaceNotifications = NSWorkspace.shared.notificationCenter
+        workspaceNotifications.addObserver(self, selector: #selector(systemWillSleep), name: NSWorkspace.willSleepNotification, object: nil)
+        workspaceNotifications.addObserver(self, selector: #selector(systemDidWake), name: NSWorkspace.didWakeNotification, object: nil)
+        workspaceNotifications.addObserver(self, selector: #selector(volumesChanged), name: NSWorkspace.didMountNotification, object: nil)
+        workspaceNotifications.addObserver(self, selector: #selector(volumesChanged), name: NSWorkspace.didUnmountNotification, object: nil)
         quota.refresh()
         let refresher = Timer(timeInterval: QuotaAlertPolicy.refreshInterval, repeats: true) { [weak self] _ in self?.quota.refresh(userTriggered: false) }
         RunLoop.main.add(refresher, forMode: .common)
@@ -283,6 +317,8 @@ final class ClockController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(item("显示秒", action: #selector(toggleSeconds), checked: showSeconds))
         menu.addItem(item("显示日期", action: #selector(toggleDate), checked: showDate))
         menu.addItem(item("外观设置（透明度与颜色）", action: #selector(showAppearanceSettings)))
+        menu.addItem(item("系统监控设置", action: #selector(showMonitorSettings)))
+        menu.addItem(item(showSystemDetails ? "收起系统监控" : "展开系统监控", action: #selector(toggleSystem)))
         let reminderSettings = NSMenuItem(title: "额度冒泡设置", action: nil, keyEquivalent: "")
         let reminderMenu = NSMenu()
         reminderMenu.addItem(item("仅收起时提醒", action: #selector(toggleAlerts), checked: alertsEnabled))
@@ -296,7 +332,7 @@ final class ClockController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         reminderSettings.submenu = reminderMenu
         menu.addItem(reminderSettings)
         menu.addItem(item(showQuota ? "收起全部额度" : "展开全部额度", action: #selector(toggleQuota)))
-        menu.addItem(item("立即刷新额度", action: #selector(refreshQuota)))
+        menu.addItem(item("立即刷新额度与系统数据", action: #selector(refreshQuota)))
         menu.addItem(item("打开额度网页", action: #selector(openQuota)))
         for (title, size) in [("小号", 26), ("中号", 36), ("大号", 52)] {
             menu.addItem(item(title, action: #selector(setSize(_:)), checked: Int(fontSize) == size, tag: size))
@@ -310,19 +346,21 @@ final class ClockController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func refreshMenu() { statusItem?.menu = makeMenu() }
 
     func applySettings() {
+        if !isUITest { systemMonitor.configure(monitorConfiguration) }
         if showQuota || !alertsEnabled { alertPresenter.dismiss() }
         let width = max(320, ceil(fontSize * (showSeconds ? 5.25 : 3.5) + 36))
         let footer = Self.footerHeight
-        let quotaHeight = showQuota ? quota.lines.reduce(CGFloat(8)) { $0 + $1.height } : 0
+        let quotaHeight = dashboardHeight
         let availableHeight = max(200, (panel.screen ?? NSScreen.main)?.visibleFrame.height ?? 800) - 48
         let size = NSSize(width: width, height: min(clockHeight + footer + quotaHeight, availableHeight))
         let top = panel.frame.maxY
         panel.setFrame(NSRect(x: panel.frame.minX, y: top - size.height, width: size.width, height: size.height), display: true)
-        quotaScroll.isHidden = !showQuota
+        quotaScroll.isHidden = quotaHeight == 0
         // 底部工具条：左侧展开／收起，右侧查询与外观设置；两种状态下位置不变。
         disclosureButton.symbol = showQuota ? "chevron.down" : "chevron.right"
-        disclosureButton.title = showQuota ? "收起额度" : "展开额度"
+        disclosureButton.title = "额度"
         disclosureButton.setAccessibilityLabel(showQuota ? "收起全部额度" : "展开全部额度")
+        systemButton.setAccessibilityLabel(showSystemDetails ? "收起系统监控" : "展开系统监控")
         let loading = quota.sources.contains { $0.loading }
         queryButton.isEnabled = !loading
         queryButton.title = loading ? "查询中…" : "查询"
@@ -331,10 +369,14 @@ final class ClockController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let queryWidth = queryButton.fittingWidth
         queryButton.frame = NSRect(x: settingsButton.frame.minX - 6 - queryWidth, y: 10, width: queryWidth, height: row)
         disclosureButton.frame = NSRect(x: 10, y: 10, width: disclosureButton.fittingWidth, height: row)
+        systemButton.frame = NSRect(x: disclosureButton.frame.maxX + 6, y: 10, width: systemButton.fittingWidth, height: row)
         // 滚动区与内容等高，不再因 6pt 差值常驻滚动条；仅在超出屏幕时滚动。
         quotaScroll.frame = NSRect(x: 0, y: footer, width: width, height: max(0, size.height - clockHeight - footer))
         let previousHeight = quotaContent.frame.height
         quotaContent.setFrameSize(NSSize(width: quotaScroll.contentSize.width, height: quotaHeight))
+        systemView.frame = NSRect(x: 0, y: quotaHeight - monitorHeight, width: quotaContent.bounds.width, height: monitorHeight)
+        systemView.isHidden = monitorHeight == 0
+        systemView.needsDisplay = true
         if previousHeight != quotaHeight {
             quotaContent.scroll(NSPoint(x: 0, y: max(0, quotaHeight - quotaScroll.contentSize.height)))
         }
@@ -352,9 +394,10 @@ final class ClockController: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func refreshAppearance() {
         let palette = appearance.palette
-        for button in [disclosureButton, queryButton, settingsButton] { button.palette = palette }
+        for button in [disclosureButton, systemButton, queryButton, settingsButton] { button.palette = palette }
         clockView.needsDisplay = true
         quotaContent.needsDisplay = true
+        systemView.needsDisplay = true
         alertPresenter.updateAppearance(appearance)
     }
 
@@ -367,7 +410,17 @@ final class ClockController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         defaults.set(wasExpanded, forKey: "hideQuota")
         applySettings()
     }
-    @objc func refreshQuota() { quota.refresh(userTriggered: true) }
+    @objc func refreshQuota() { quota.refresh(userTriggered: true); systemMonitor.refresh(forceCapacity: true) }
+    @objc func toggleSystem() {
+        if monitorConfiguration.enabled.isEmpty { showMonitorSettings(); return }
+        defaults.set(showSystemDetails, forKey: "monitorCollapsed")
+        applySettings()
+    }
+    @objc func showMonitorSettings() { appearanceSettings.show(tab: 1) }
+    @objc func systemWillSleep() { systemMonitor.setSuspended(true) }
+    @objc func systemDidWake() { systemMonitor.setSuspended(false) }
+    @objc func volumesChanged() { systemMonitor.refresh(forceCapacity: true) }
+    func applicationWillTerminate(_ notification: Notification) { systemMonitor.setSuspended(true) }
     @objc func showAppearanceSettings() { appearanceSettings.show() }
     @objc func openQuota() { NSWorkspace.shared.open(quota.baseURL.appendingPathComponent("quota")) }
     @objc func setSize(_ sender: NSMenuItem) { defaults.set(sender.tag, forKey: "fontSize"); applySettings() }
@@ -426,6 +479,7 @@ if CommandLine.arguments.contains("--self-test") {
     print("PASS: appearance defaults, transparency bounds, alpha conversion and color persistence")
     runQuotaAlertTests()
     runQuotaFreshnessTests()
+    runSystemMonitorTests()
     for path in CommandLine.arguments.dropFirst(2) {
         let response = try JSONDecoder().decode(QuotaResponse.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
         let source = QuotaSource(path: "test", title: "测试")

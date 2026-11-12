@@ -53,6 +53,8 @@ MOUNTED=1
 codesign --verify --verbose "$MOUNT/悬浮时钟.app"
 cmp "$APP/Contents/MacOS/FloatingClock" "$MOUNT/悬浮时钟.app/Contents/MacOS/FloatingClock"
 cmp Assets/AppIcon.icns "$MOUNT/悬浮时钟.app/Contents/Resources/AppIcon.icns"
+cmp PrivacyInfo.xcprivacy "$MOUNT/悬浮时钟.app/Contents/Resources/PrivacyInfo.xcprivacy"
+plutil -lint "$MOUNT/悬浮时钟.app/Contents/Resources/PrivacyInfo.xcprivacy"
 [[ "$(readlink "$MOUNT/应用程序")" == /Applications ]]
 "$MOUNT/悬浮时钟.app/Contents/MacOS/FloatingClock" --self-test
 hdiutil detach "$MOUNT"

@@ -85,55 +85,75 @@ final class AppearanceSettings: NSObject {
     let slider = NSSlider(value: 85, minValue: 0, maxValue: 100, target: nil, action: nil)
     let valueLabel = NSTextField(labelWithString: "")
     let colorWell = NSColorWell()
+    let tabs = NSSegmentedControl(labels: ["外观", "监控"], trackingMode: .selectOne, target: nil, action: nil)
+    let appearancePage = NSView(frame: NSRect(x: 0, y: 10, width: 310, height: 272))
+    lazy var monitorPage = MonitorSettingsView(controller: controller!)
 
     init(controller: ClockController) {
         self.controller = controller
-        window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 310, height: 190), styleMask: [.titled, .closable, .utilityWindow], backing: .buffered, defer: false)
+        window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 310, height: 340), styleMask: [.titled, .closable, .utilityWindow], backing: .buffered, defer: false)
         super.init()
-        window.title = "时钟外观设置"
+        window.title = "时钟设置"
         window.isReleasedWhenClosed = false
         window.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         window.appearance = NSAppearance(named: .darkAqua)
-        let content = window.contentView!
+        let root = window.contentView!
+        tabs.frame = NSRect(x: 20, y: 299, width: 270, height: 26)
+        tabs.selectedSegment = 0
+        tabs.target = self
+        tabs.action = #selector(changeTab)
+        root.addSubview(tabs)
+        root.addSubview(appearancePage)
+        root.addSubview(monitorPage)
+        monitorPage.isHidden = true
+        let content = appearancePage
         let title = NSTextField(labelWithString: "背景透明度")
-        title.frame = NSRect(x: 20, y: 145, width: 160, height: 20)
+        title.frame = NSRect(x: 20, y: 224, width: 160, height: 20)
         content.addSubview(title)
-        valueLabel.frame = NSRect(x: 220, y: 145, width: 70, height: 20)
+        valueLabel.frame = NSRect(x: 220, y: 224, width: 70, height: 20)
         valueLabel.alignment = .right
         content.addSubview(valueLabel)
-        slider.frame = NSRect(x: 18, y: 109, width: 274, height: 28)
+        slider.frame = NSRect(x: 18, y: 188, width: 274, height: 28)
         slider.isContinuous = true
         slider.target = self
         slider.action = #selector(changeTransparency)
         slider.setAccessibilityLabel("背景透明度")
         content.addSubview(slider)
         let colorLabel = NSTextField(labelWithString: "背景颜色")
-        colorLabel.frame = NSRect(x: 20, y: 66, width: 160, height: 20)
+        colorLabel.frame = NSRect(x: 20, y: 129, width: 160, height: 20)
         content.addSubview(colorLabel)
-        colorWell.frame = NSRect(x: 232, y: 60, width: 58, height: 30)
+        colorWell.frame = NSRect(x: 232, y: 125, width: 58, height: 30)
         colorWell.target = self
         colorWell.isContinuous = true
         colorWell.action = #selector(changeColor)
         colorWell.setAccessibilityLabel("背景颜色")
         content.addSubview(colorWell)
-        let hint = NSTextField(labelWithString: "即时生效并自动保存；文字颜色随背景深浅切换。")
+        let hint = NSTextField(wrappingLabelWithString: "即时生效并自动保存；文字颜色随背景深浅切换。时钟、监控、额度与气泡使用相同透明度。")
         hint.font = NSFont.systemFont(ofSize: 11)
         hint.textColor = .secondaryLabelColor
-        hint.frame = NSRect(x: 20, y: 20, width: 275, height: 18)
+        hint.frame = NSRect(x: 20, y: 35, width: 270, height: 50)
         content.addSubview(hint)
         window.center()
     }
 
-    func show() {
+    func show(tab: Int = 0) {
         guard let controller = controller else { return }
         slider.doubleValue = controller.appearance.transparency
         updateLabel()
         colorWell.color = controller.appearance.color
+        tabs.selectedSegment = tab
+        changeTab()
+        monitorPage.refresh()
         NSColorPanel.shared.showsAlpha = false
         NSColorPanel.shared.level = NSWindow.Level(rawValue: window.level.rawValue + 1)
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+    }
+
+    @objc func changeTab() {
+        appearancePage.isHidden = tabs.selectedSegment != 0
+        monitorPage.isHidden = tabs.selectedSegment != 1
     }
 
     func updateLabel() {
